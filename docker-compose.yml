@@ -1,0 +1,69 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: tablestory
+      POSTGRES_USER: tablestory
+      POSTGRES_PASSWORD: tablestory
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tablestory -d tablestory"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  migrate:
+    image: postgres:16-alpine
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./:/workspace
+    environment:
+      PGPASSWORD: tablestory
+    entrypoint: ["/bin/sh", "-lc"]
+    command: >-
+      "for f in /workspace/db/migrations/*.sql; do
+         psql -h db -U tablestory -d tablestory -f \"$f\";
+       done"
+
+  seed:
+    image: postgres:16-alpine
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - ./:/workspace
+    environment:
+      PGPASSWORD: tablestory
+    entrypoint: ["/bin/sh", "-lc"]
+    command: "psql -h db -U tablestory -d tablestory -f /workspace/db/seeds/001_demo_investor_seed.sql"
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://tablestory:tablestory@db:5432/tablestory
+      PORT: 3000
+    ports:
+      - "3000:3000"
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://tablestory:tablestory@db:5432/tablestory
+
+volumes:
+  pgdata:
